@@ -1,22 +1,32 @@
 # SRDs — Sistema de Reservas de Recursos Didáticos
 
-Protótipo **v0.1** para gestão de reservas de espaços, equipamentos e materiais pedagógicos em múltiplas escolas.
+A v0.2 usa Supabase Auth e Postgres. Cada usuário tem um papel por unidade. Professores consultam o catálogo, a disponibilidade agregada e as próprias reservas. Administradores da unidade gerenciam recursos e podem consultar e cancelar reservas da unidade.
 
-## Executar
-Requer Node.js 22+.
+## Executar localmente
 
-```bash
-npm install
-npm run dev
+Use Node.js 22 ou superior. Copie `.env.example` para `.env.local` na raiz e preencha as duas variáveis com a URL e a chave publicável do projeto. Execute `npm install`, `npm run build` e `npm run dev`. A chave publicável é enviada ao navegador. Mantenha chaves administrativas fora das variáveis VITE e do Git.
+
+## Preparar o Supabase
+
+1. Revise a migração em `supabase/migrations/` e confira se o projeto já possui tabelas com os mesmos nomes. Aplique primeiro em um projeto de teste, por meio do SQL Editor ou de uma migração revisada pela equipe.
+2. Habilite autenticação por e-mail e senha. Crie os usuários em Authentication → Users. A aplicação usa contas provisionadas. Para um ambiente fechado, desabilite cadastro público.
+3. Como administrador do banco, cadastre as escolas e vincule cada UUID de Authentication → Users à escola correspondente. Exemplo para o SQL Editor, substituindo os UUIDs.
+
+```sql
+insert into public.schools (name) values ('Nome da escola') returning id;
+insert into public.school_members (school_id, user_id, role)
+values ('UUID_DA_ESCOLA', 'UUID_DO_USUARIO', 'admin');
 ```
 
+Repita o vínculo com papel `teacher` para professores. Os registros fictícios do navegador da v0.1 ficam fora do banco.
+
+## Validar antes de publicar
+
+- Acesse com duas contas em escolas diferentes e confirme que a escola, os recursos e as reservas da outra conta ficam inacessíveis.
+- Na mesma escola, confirme que professores só podem consultar e cancelar as próprias reservas, e que somente administradores cadastram ou ativam recursos.
+- Crie um recurso de capacidade 1. Envie duas reservas simultâneas para a mesma data e aula em sessões diferentes. Confira que apenas uma é confirmada. Cancele e confira que a vaga volta a ficar disponível.
+- Para capacidade maior do que 1, teste reservas parciais, uma soma acima da capacidade e outra aula independente.
+
 ## Publicar
-O workflow em `.github/workflows/deploy.yml` prepara o GitHub Pages. Em Settings → Pages, selecionar **GitHub Actions**. O repositório está privado; a disponibilidade de Pages depende do plano GitHub.
 
-## Limitações
-A v0.1 usa dados fictícios no `localStorage`. Não existe login real nem sincronização entre dispositivos. **Não usar para reservas oficiais.**
-
-## Próximas versões
-Supabase/PostgreSQL, autenticação, isolamento seguro por escola, transações atômicas de reserva, calendário configurável, auditoria e LGPD.
-
-Veja `docs/requisitos.md`.
+Após validar o banco de teste, revise e aplique a migração no projeto de destino. Em Settings → Secrets and variables → Actions → Variables, configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`. Em Settings → Pages, selecione GitHub Actions como origem, se o plano permitir publicar a partir do repositório privado. A atualização da `main` aciona a publicação. A branch `srds-v0.2` executa apenas a compilação.
