@@ -52,15 +52,14 @@ reserva nessa sessão depois da publicação.
 ### Turnos e horários
 
 Revise e aplique `supabase/migrations/202611130004_school_periods.sql`
-no Supabase de teste antes de abrir a v0.4.0.
+no Supabase de teste antes de abrir a v0.4.1.
 Em **Administração → Turnos e horários**, informe os horários reais
 das cinco aulas originais. Os códigos de 1 a 5 mantêm o vínculo com as
 reservas e restrições existentes. Depois, adicione as aulas dos demais
 turnos. Use **Desativar** para tirar uma aula da agenda.
 
 Cada aula cadastrada tem um código fixo. Para mudar seu horário, desative
-a aula e cadastre outra. A grade impede sobreposição com aulas ativas ou
-reservas confirmadas. Confira as restrições específicas por aula antes
+a aula e cadastre outra. A grade impede sobreposição dentro do mesmo turno e segmento. A agenda e o banco verificam a capacidade em cada intervalo real, inclusive entre segmentos. Confira as restrições específicas por aula antes
 de usar o novo horário. No CSV de calendário, use o código mostrado na
 Administração ou 0 para o dia inteiro.
 

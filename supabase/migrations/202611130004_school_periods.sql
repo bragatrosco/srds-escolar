@@ -3,6 +3,7 @@ begin;
 create table public.school_periods (
   school_id uuid not null references public.schools,
   period integer not null check (period > 0),
+  segment text not null check (length(trim(segment)) between 1 and 40),
   shift text not null check (length(trim(shift)) between 1 and 40),
   label text not null check (length(trim(label)) between 1 and 40),
   starts time not null,
@@ -36,16 +37,16 @@ begin
     raise exception 'Recarregue a grade antes de salvar.' using errcode = 'P0001';
   end if;
   for item in select * from jsonb_to_recordset(p_rows)
-    as r(period integer, shift text, label text, starts time, ends time, active boolean)
+    as r(period integer, segment text, shift text, label text, starts time, ends time, active boolean)
   loop
     if p_initialize then
       if item.period is null or item.period not between 1 and 5 or item.active is distinct from true then
         raise exception 'Preencha as cinco aulas existentes.' using errcode = 'P0001';
       end if;
-      insert into public.school_periods values (p_school, item.period, trim(item.shift), trim(item.label), item.starts, item.ends, true);
+      insert into public.school_periods values (p_school, item.period, trim(item.segment), trim(item.shift), trim(item.label), item.starts, item.ends, true);
     elsif item.period is null then
       next_period := next_period + 1;
-      insert into public.school_periods values (p_school, next_period, trim(item.shift), trim(item.label), item.starts, item.ends, true);
+      insert into public.school_periods values (p_school, next_period, trim(item.segment), trim(item.shift), trim(item.label), item.starts, item.ends, true);
     else
       update public.school_periods set active = item.active where school_id = p_school and period = item.period;
       if not found then raise exception 'Horário desconhecido.' using errcode = 'P0001'; end if;
@@ -58,11 +59,8 @@ begin
     select 1
     from public.school_periods a join public.school_periods b on a.school_id = b.school_id and a.period <> b.period
     where a.school_id = p_school and a.active and a.starts < b.ends and b.starts < a.ends
-      and (b.active or exists (
-        select 1 from public.reservations r
-        where r.school_id = b.school_id and r.period = b.period and r.cancelled_at is null
-      ))
-  ) then raise exception 'Há sobreposição com outro horário ativo ou com uma reserva confirmada.' using errcode = 'P0001'; end if;
+      and b.active and a.segment = b.segment and a.shift = b.shift
+  ) then raise exception 'Há sobreposição na grade do mesmo turno e segmento.' using errcode = 'P0001'; end if;
 end;
 $$;
 
@@ -107,6 +105,48 @@ begin
 end;
 $$;
 
+create function public.school_slot_usage(p_school uuid, p_resource uuid, p_date date, p_period integer)
+returns bigint language sql stable security definer set search_path = '' as $$
+  with target as (
+    select starts, ends from public.school_periods where school_id = p_school and period = p_period
+  ), occupied as (
+    select h.starts, h.ends, r.quantity
+    from public.reservations r join public.school_periods h using (school_id, period)
+    where r.school_id = p_school and r.resource_id = p_resource and r.date = p_date
+      and r.cancelled_at is null
+  ), points as (
+    select starts as instant from target
+    union
+    select o.starts from occupied o cross join target t where o.starts > t.starts and o.starts < t.ends
+  )
+  select case when exists (select 1 from target) then coalesce((
+    select max(total) from (
+      select sum(o.quantity) as total from points p
+      left join occupied o on o.starts <= p.instant and p.instant < o.ends
+      group by p.instant
+    ) totals
+  ), 0) else (
+    select coalesce(sum(quantity), 0) from public.reservations
+    where school_id = p_school and resource_id = p_resource and date = p_date
+      and period = p_period and cancelled_at is null
+  ) end;
+$$;
+revoke all on function public.school_slot_usage(uuid, uuid, date, integer) from public, anon, authenticated;
+
+create or replace function public.resource_availability(p_school uuid, p_resource uuid, p_date date)
+returns table (period integer, used bigint)
+language sql stable security definer set search_path = '' as $$
+  select h.period, public.school_slot_usage(p_school, p_resource, p_date, h.period)
+  from (
+    select s.period from public.school_periods s where s.school_id = p_school and s.active
+    union all
+    select generate_series(1, 5) where not exists (
+      select 1 from public.school_periods s where s.school_id = p_school
+    )
+  ) h
+  where exists (select 1 from public.school_members where school_id = p_school and user_id = auth.uid());
+$$;
+
 create or replace function public.reserve_resource(
   p_school uuid, p_resource uuid, p_date date, p_period integer, p_quantity integer
 ) returns uuid language plpgsql volatile security definer set search_path = '' as $$
@@ -141,9 +181,7 @@ begin
   returning quantity into capacity;
   if not found then raise exception 'Recurso indisponível' using errcode = 'P0001'; end if;
 
-  select coalesce(sum(quantity), 0) into used from public.reservations
-  where school_id = p_school and resource_id = p_resource and date = p_date
-    and period = p_period and cancelled_at is null;
+  used := public.school_slot_usage(p_school, p_resource, p_date, p_period);
   if used + p_quantity > capacity then
     raise exception 'Quantidade indisponível neste período' using errcode = 'P0001';
   end if;
