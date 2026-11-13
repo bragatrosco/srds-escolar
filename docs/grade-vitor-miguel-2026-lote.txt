@@ -1,0 +1,18 @@
+Anos Finais;Matutino;1ª aula;07:30;08:15
+Anos Finais;Matutino;2ª aula;08:15;09:00
+Anos Finais;Matutino;3ª aula;09:00;09:45
+Anos Finais;Matutino;4ª aula;10:00;10:45
+Anos Finais;Matutino;5ª aula;10:45;11:30
+Anos Finais;Matutino;6ª aula;11:30;12:15
+Anos Iniciais;Vespertino;1ª aula;13:00;13:45
+Anos Iniciais;Vespertino;2ª aula;13:45;14:30
+Anos Iniciais;Vespertino;3ª aula;14:45;15:30
+Anos Iniciais;Vespertino;4ª aula;15:30;16:15
+Anos Iniciais;Vespertino;5ª aula;16:15;17:00
+Anos Finais;Vespertino;1ª aula;13:00;13:45
+Anos Finais;Vespertino;2ª aula;13:45;14:30
+Anos Finais;Vespertino;3ª aula;14:30;15:15
+Anos Finais;Vespertino;4ª aula;15:30;16:15
+Anos Finais;Vespertino;5ª aula;16:15;17:00
+Anos Finais;Vespertino;6ª aula;17:00;17:45
+
