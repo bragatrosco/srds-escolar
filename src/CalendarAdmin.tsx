@@ -1,3 +1,4 @@
+import { periodLabel, type Period } from './SchoolPeriods';
 import { useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -50,16 +51,17 @@ function validRows(rows: Restriction[], year: number) {
     const parsed = new Date(date + 'T00:00:00Z');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !date.startsWith(year + '-') ||
       Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date ||
-      !Number.isInteger(period) || period < 0 || period > 5 || !reason.trim() ||
+      !Number.isInteger(period) || period < 0 || period > 2147483647 || !reason.trim() ||
       reason.trim().length > 200 || keys.has(key)) return false;
     keys.add(key);
     return true;
   });
 }
 
-export function CalendarAdmin({ client, school, onPublish }: {
+export function CalendarAdmin({ client, school, periods, onPublish }: {
   client: SupabaseClient;
   school: string;
+  periods: Period[];
   onPublish: () => void;
 }) {
   const [year, setYear] = useState(new Date().getFullYear());
@@ -147,7 +149,7 @@ export function CalendarAdmin({ client, school, onPublish }: {
           <label>Data<input type="date" value={row.date} onChange={event => edit(index, { date: event.target.value })} /></label>
           <label>Abrangência<select value={row.period} onChange={event => edit(index, { period: Number(event.target.value) })}>
             <option value={0}>Dia inteiro</option>
-            {[1, 2, 3, 4, 5].map(period => <option key={period} value={period}>{period}ª aula</option>)}
+            {periods.map(slot => <option key={slot.period} value={slot.period}>{periodLabel(slot)}</option>)}
           </select></label>
           <label>Motivo<input value={row.reason} maxLength={200} onChange={event => edit(index, { reason: event.target.value })} /></label>
           <button onClick={() => setRows(current => current.filter((_, i) => i !== index))}>Remover</button>
