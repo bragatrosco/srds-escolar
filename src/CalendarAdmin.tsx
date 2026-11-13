@@ -22,11 +22,17 @@ export function restrictionFor(rows: Restriction[], date: string, period: number
     ?? rows.find(row => row.date === date && row.period === period);
 }
 
-async function importRows(file: File): Promise<Restriction[]> {
+async function importRows(file: File, year: number): Promise<Restriction[]> {
   if (file.name.toLowerCase().endsWith('.pdf')) {
+    if (file.size > 10 * 1024 * 1024) throw new Error('Importe um PDF de até 10 MB.');
     const bytes = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
     const hash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
-    if (hash !== approvedPdf) throw new Error('PDF ainda sem leitura automática. Use o modelo CSV com as datas aprovadas.');
+    if (hash !== approvedPdf) {
+      const { readCalendarPdf } = await import('./calendarPdf');
+      const suggestions = await readCalendarPdf(await file.arrayBuffer(), year);
+      if (!suggestions.length) throw new Error('Nenhuma data explícita encontrada. Confira o PDF e use o modelo CSV ou adicione datas manualmente.');
+      return suggestions;
+    }
     return [
       ...knownDates.flatMap(([days, reason]) => days.split(',').map(day => ({
         date: '2026-' + day, period: 0, reason,
@@ -125,7 +131,7 @@ export function CalendarAdmin({ client, school, periods, onPublish }: {
       onChange={event => { setYear(Number(event.target.value)); setLoaded(undefined); }} /></label>
     <button disabled={busy || !Number.isInteger(year) || year < 1900 || year > 9998} onClick={open}>Abrir ano</button>
     {loaded && <>
-      <p>Importe as datas do calendário aprovado e revise os bloqueios antes de publicar.</p>
+      <p>Importe o calendário aprovado. Em PDFs com texto, o SRDs sugere datas citadas junto a feriados, recessos e outros dias sem aula. Confira as sugestões e complete as datas antes de publicar.</p>
       <a href={'data:text/csv;charset=utf-8,' + encodeURIComponent('data;periodo;motivo\n' + loaded.year + '-11-20;0;Consciência Negra\n')}
         download="modelo-calendario.csv">Baixar modelo CSV</a>
       <label>Importar calendário<input ref={importInput} type="file" accept=".pdf,.csv" disabled={busy}
@@ -134,10 +140,9 @@ export function CalendarAdmin({ client, school, periods, onPublish }: {
           if (!file) return;
           void run(async () => {
             try {
-              const imported = await importRows(file);
+              const imported = await importRows(file, loaded.year);
               if (!validRows(imported, loaded.year)) throw new Error('O arquivo tem datas fora do ano, registros inválidos ou duplicados.');
-              const importedKeys = new Set(imported.map(row => row.date + ':' + row.period));
-              setRows(current => [...current.filter(row => !importedKeys.has(row.date + ':' + row.period)), ...imported]
+              setRows(current => [...current, ...imported.filter(row => !current.some(existing => existing.date === row.date && existing.period === row.period))]
                 .sort((a, b) => a.date.localeCompare(b.date) || a.period - b.period));
               setMessage(imported.length + ' restrições importadas para revisão.');
             } finally { if (importInput.current) importInput.current.value = ''; }
