@@ -49,6 +49,21 @@ sem restrições publicadas. Para testar a validação no servidor, deixe a agen
 aberta em outra sessão antes de publicar um bloqueio e tente confirmar uma
 reserva nessa sessão depois da publicação.
 
+### Turnos e horários
+
+Revise e aplique `supabase/migrations/202611130004_school_periods.sql`
+no Supabase de teste antes de abrir a v0.4.0.
+Em **Administração → Turnos e horários**, informe os horários reais
+das cinco aulas originais. Os códigos de 1 a 5 mantêm o vínculo com as
+reservas e restrições existentes. Depois, adicione as aulas dos demais
+turnos. Use **Desativar** para tirar uma aula da agenda.
+
+Cada aula cadastrada tem um código fixo. Para mudar seu horário, desative
+a aula e cadastre outra. A grade impede sobreposição com aulas ativas ou
+reservas confirmadas. Confira as restrições específicas por aula antes
+de usar o novo horário. No CSV de calendário, use o código mostrado na
+Administração ou 0 para o dia inteiro.
+
 ### GitHub Pages
 
 Após validar o banco de teste, revise e aplique a migração no projeto de destino. Em Settings → Secrets and variables → Actions → Variables, configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`. Em Settings → Pages, selecione GitHub Actions como origem, se o plano permitir publicar a partir do repositório privado. A atualização da `main` aciona a publicação. A branch `srds-v0.2` executa apenas a compilação.
