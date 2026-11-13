@@ -1,23 +1,237 @@
-import React,{useState} from 'react';
-import{createRoot}from'react-dom/client';
+import { useEffect, useState, type FormEvent } from 'react';
+import { createRoot } from 'react-dom/client';
+import { createClient, type Session } from '@supabase/supabase-js';
 import './style.css';
-type Resource={id:string;schoolId:string;name:string;category:string;quantity:number;active:boolean};
-type Booking={id:string;schoolId:string;resourceId:string;date:string;period:number;quantity:number;teacher:string;status:'confirmed'|'cancelled'};
-const schools=[{id:'s1',name:'Escola Demonstrativa 01'},{id:'s2',name:'Escola Demonstrativa 02'}];
-const seed:Resource[]=[{id:'r1',schoolId:'s1',name:'Sala de informática',category:'Espaços',quantity:1,active:true},{id:'r2',schoolId:'s1',name:'Projetor multimídia',category:'Equipamentos',quantity:2,active:true},{id:'r3',schoolId:'s1',name:'Kit de robótica',category:'Materiais',quantity:4,active:true},{id:'r4',schoolId:'s2',name:'Biblioteca',category:'Espaços',quantity:1,active:true}];
-function load<T>(key:string,initial:T):T{try{const x=localStorage.getItem(key);return x?JSON.parse(x) as T:initial}catch{return initial}}
-function App(){
-const[school,setSchool]=useState('s1'),[resources,setResources]=useState<Resource[]>(()=>load('srds-resources',seed)),[bookings,setBookings]=useState<Booking[]>(()=>load('srds-bookings',[]));
-const[tab,setTab]=useState('agenda'),[resourceId,setResourceId]=useState('r1'),[date,setDate]=useState(new Date().toISOString().slice(0,10)),[period,setPeriod]=useState(1),[quantity,setQuantity]=useState(1),[teacher,setTeacher]=useState('Professor(a) demonstrativo'),[name,setName]=useState(''),[category,setCategory]=useState('Equipamentos'),[count,setCount]=useState(1),[notice,setNotice]=useState('');
-const local=resources.filter(x=>x.schoolId===school),active=bookings.filter(x=>x.schoolId===school&&x.status==='confirmed'),selected=local.find(x=>x.id===resourceId&&x.active)||local.find(x=>x.active);
-function persistResources(x:Resource[]){setResources(x);localStorage.setItem('srds-resources',JSON.stringify(x))}
-function persistBookings(x:Booking[]){setBookings(x);localStorage.setItem('srds-bookings',JSON.stringify(x))}
-function reserve(){if(!selected||!date||!teacher.trim()||!Number.isInteger(quantity)||quantity<1){setNotice('Preencha os campos corretamente.');return}const used=active.filter(x=>x.resourceId===selected.id&&x.date===date&&x.period===period).reduce((a,b)=>a+b.quantity,0);if(used+quantity>selected.quantity){setNotice('Conflito: quantidade indisponível neste período.');return}persistBookings([...bookings,{id:crypto.randomUUID(),schoolId:school,resourceId:selected.id,date,period,quantity,teacher:teacher.trim(),status:'confirmed'}]);setNotice('Reserva demonstrativa registrada.')}
-function add(){if(!name.trim()||!Number.isInteger(count)||count<1){setNotice('Informe nome e quantidade válida.');return}persistResources([...resources,{id:crypto.randomUUID(),schoolId:school,name:name.trim(),category,quantity:count,active:true}]);setName('');setNotice('Recurso cadastrado.')}
-return <><header><div><strong>SRDs</strong><small>Sistema de Reservas de Recursos Didáticos</small></div><span className="version">Protótipo v0.1</span></header><main><section className="hero"><div><h1>Gestão de recursos escolares</h1><p>Reserve espaços, equipamentos e materiais pedagógicos.</p></div><label>Unidade escolar<select value={school} onChange={e=>{const id=e.target.value;setSchool(id);setResourceId(resources.find(r=>r.schoolId===id)?.id||'');setNotice('')}}>{schools.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></section><nav>{[['agenda','Agenda e reserva'],['recursos','Recursos'],['minhas','Reservas'],['admin','Administração']].map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('')}}>{label}</button>)}</nav>{notice&&<p role="status" className="notice">{notice}</p>}
-{tab==='agenda'&&<div className="columns"><section className="panel"><h2>Nova reserva</h2><label>Recurso<select value={selected?.id||''} onChange={e=>setResourceId(e.target.value)}>{local.filter(x=>x.active).map(x=><option value={x.id} key={x.id}>{x.name} ({x.quantity} un.)</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><label>Período<select value={period} onChange={e=>setPeriod(Number(e.target.value))}>{[1,2,3,4,5].map(x=><option value={x} key={x}>{x}ª aula</option>)}</select></label><label>Quantidade<input type="number" min="1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><label>Solicitante fictício<input value={teacher} onChange={e=>setTeacher(e.target.value)}/></label><button className="primary" onClick={reserve}>Confirmar reserva</button></section><section className="panel"><h2>Disponibilidade do dia</h2><p className="muted">{date} · {selected?.name}</p>{[1,2,3,4,5].map(x=>{const used=active.filter(b=>b.resourceId===selected?.id&&b.date===date&&b.period===x).reduce((a,b)=>a+b.quantity,0);return <div className="slot" key={x}><strong>{x}ª aula</strong><span className={used>=(selected?.quantity||1)?'busy':'free'}>{used}/{selected?.quantity||0} reservados</span></div>})}</section></div>}
+import { CalendarAdmin, restrictionFor, type Restriction } from './CalendarAdmin';
+
+const url = import.meta.env.VITE_SUPABASE_URL;
+const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const db = url && key ? createClient(url, key) : null;
+
+type School = { id: string; name: string };
+type Resource = { id: string; name: string; category: string; quantity: number; active: boolean };
+type Booking = { id: string; resource_id: string; date: string; period: number; quantity: number; calendar_conflict?: string | null };
+type Slot = { period: number; used: number };
+
+function App() {
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!db) return;
+    const { data } = db.auth.onAuthStateChange((_event, current) => setSession(current));
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!db || busy) return;
+    const fields = new FormData(event.currentTarget);
+    setBusy(true);
+    setNotice('');
+    try {
+      const { error } = await db.auth.signInWithPassword({
+        email: String(fields.get('email')).trim(),
+        password: String(fields.get('password')),
+      });
+      if (error) setNotice('Não foi possível entrar. Confira o e-mail e a senha.');
+    } catch {
+      setNotice('Não foi possível conectar ao serviço de autenticação.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logout() {
+    const result = await db?.auth.signOut();
+    setNotice(result?.error ? 'Não foi possível sair. Tente novamente.' : '');
+  }
+
+  if (!db) return <main><p role="alert">Configure a URL e a chave publicável do Supabase para acessar o SRDs.</p></main>;
+  if (session === undefined) return <main><p role="status">Carregando sessão…</p></main>;
+  if (session) return <Workspace key={session.user.id} client={db} logout={logout} authNotice={notice} />;
+  return <main><form className="panel" onSubmit={login}>
+    <h1>Entrar no SRDs</h1>
+    <label>E-mail<input name="email" type="email" autoComplete="username" required /></label>
+    <label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>
+    <button className="primary" disabled={busy}>Entrar</button>
+    {notice && <p role="status">{notice}</p>}
+  </form></main>;
+}
+
+function Workspace({ client, logout, authNotice }: {
+  client: NonNullable<typeof db>;
+  logout: () => Promise<void>;
+  authNotice: string;
+}) {
+  const [schools, setSchools] = useState<School[]>();
+  const [admins, setAdmins] = useState<string[]>([]);
+  const [school, setSchool] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.all([
+      client.from('schools').select('id,name').order('name').abortSignal(controller.signal),
+      client.from('school_members').select('school_id').eq('role', 'admin').abortSignal(controller.signal),
+    ]).then(([units, membership]) => {
+      if (controller.signal.aborted) return;
+      if (units.error || membership.error) {
+        setNotice('Falha ao carregar as escolas. Recarregue a página para tentar novamente.');
+        return;
+      }
+      setSchools(units.data);
+      setAdmins(membership.data.map(row => row.school_id));
+      setSchool(units.data[0]?.id ?? '');
+    });
+    return () => controller.abort();
+  }, [client]);
+
+  const status = authNotice || notice;
+  if (!schools?.length) return <main>
+    <p role="status">{status || (schools ? 'Seu usuário ainda não está vinculado a uma escola.' : 'Carregando escolas…')}</p>
+    <button onClick={logout}>Sair</button>
+  </main>;
+  return <SchoolWorkspace key={school} {...{ client, logout, authNotice, schools, school, setSchool }} isAdmin={admins.includes(school)} />;
+}
+
+function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchool, isAdmin }: {
+  client: NonNullable<typeof db>;
+  logout: () => Promise<void>;
+  authNotice: string;
+  schools: School[];
+  school: string;
+  setSchool: (id: string) => void;
+  isAdmin: boolean;
+}) {
+  const [local, setResources] = useState<Resource[]>([]);
+  const [active, setBookings] = useState<Booking[]>([]);
+  const [tab, setTab] = useState('agenda');
+  const [resourceId, setResourceId] = useState('');
+  const [date, setDate] = useState(() => new Date().toLocaleDateString('sv-SE'));
+  const [period, setPeriod] = useState(1);
+  const [quantity, setQuantity] = useState(1);
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('Equipamentos');
+  const [count, setCount] = useState(1);
+  const [notice, setNotice] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [calendar, setCalendar] = useState<{ date: string; refresh: number; rows: Restriction[] }>();
+  const restrictions = calendar?.date === date && calendar.refresh === refresh ? calendar.rows : [];
+  const blocked = restrictionFor(restrictions, date, period);
+
+  useEffect(() => {
+    if (!date) return;
+    const controller = new AbortController();
+    void client.from('calendar_restrictions').select('date,period,reason')
+      .eq('school_id', school).eq('date', date).abortSignal(controller.signal)
+      .then(({ data, error }) => {
+        if (!controller.signal.aborted && !error) setCalendar({ date, refresh, rows: data });
+      });
+    return () => controller.abort();
+  }, [client, school, date, refresh]);
+  const [snapshot, setSnapshot] = useState<{ key: string; slots: Slot[] }>();
+  const selected = local.find(row => row.id === resourceId && row.active) ?? local.find(row => row.active);
+  const selectedId = selected?.id;
+  const availabilityKey = JSON.stringify([selectedId, date, refresh]);
+  const availability = snapshot?.key === availabilityKey ? snapshot.slots : undefined;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.all([
+      client.from('resources').select('id,name,category,quantity,active').eq('school_id', school).order('name').abortSignal(controller.signal),
+      client.from('reservations').select('id,resource_id,date,period,quantity,calendar_conflict').eq('school_id', school)
+        .is('cancelled_at', null).order('date').order('period').abortSignal(controller.signal),
+    ]).then(([resources, bookings]) => {
+      if (controller.signal.aborted) return;
+      setLoadError(resources.error || bookings.error ? 'Falha ao atualizar recursos ou reservas.' : '');
+      if (!resources.error) setResources(resources.data);
+      if (!bookings.error) setBookings(bookings.data);
+    });
+    return () => controller.abort();
+  }, [client, school, refresh]);
+
+  useEffect(() => {
+    if (!selectedId || !date) return;
+    const controller = new AbortController();
+    void client.rpc('resource_availability', {
+      p_school: school, p_resource: selectedId, p_date: date,
+    }).abortSignal(controller.signal).then(({ data, error }) => {
+      if (controller.signal.aborted) return;
+      if (error) setNotice('Falha ao consultar a disponibilidade.');
+      else setSnapshot({ key: availabilityKey, slots: data });
+    });
+    return () => controller.abort();
+  }, [client, school, selectedId, date, availabilityKey]);
+
+  async function change(
+    request: () => PromiseLike<{ error: { code: string; message: string } | null; status: number }>,
+    success: string,
+    onSuccess?: () => void,
+  ) {
+    if (busy) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const { error, status } = await request();
+      if (!error) {
+        setNotice(success);
+        onSuccess?.();
+      } else if (error.code === 'P0001') setNotice(error.message);
+      else if (error.code === '40001') setNotice('Houve uma alteração simultânea. Consulte a disponibilidade e tente novamente.');
+      else if (!status || status >= 500) setNotice('Resultado incerto. Confira a lista de reservas antes de repetir.');
+      else setNotice('Não foi possível concluir a operação. Confira os dados e suas permissões.');
+    } catch {
+      setNotice('Resultado incerto. Confira a lista de reservas antes de repetir.');
+    } finally {
+      setRefresh(value => value + 1);
+      setBusy(false);
+    }
+  }
+
+  function reserve() {
+    if (!selected || !date || !Number.isInteger(quantity) || quantity < 1 || quantity > selected.quantity) {
+      setNotice('Informe uma data e uma quantidade válida para o recurso.');
+      return;
+    }
+    const id = selected.id;
+    void change(() => client.rpc('reserve_resource', {
+      p_school: school, p_resource: id, p_date: date, p_period: period, p_quantity: quantity,
+    }), 'Reserva confirmada.');
+  }
+
+  function add() {
+    if (!name.trim() || !Number.isInteger(count) || count < 1 || count > 2147483647) {
+      setNotice('Informe nome e quantidade válida.');
+      return;
+    }
+    void change(() => client.from('resources').insert({
+      school_id: school, name: name.trim(), category, quantity: count,
+    }), 'Recurso cadastrado.', () => setName(''));
+  }
+
+  function cancel(id: string) {
+    void change(() => client.rpc('cancel_reservation', {
+      p_school: school, p_reservation: id,
+    }), 'Reserva cancelada.');
+  }
+
+  function toggle(resource: Resource) {
+    void change(() => client.from('resources').update({ active: !resource.active })
+      .eq('school_id', school).eq('id', resource.id).select('id').single(), 'Recurso atualizado.');
+  }
+
+return <><header><div><strong>SRDs</strong><small>Sistema de Reservas de Recursos Didáticos</small></div><span className="version">v0.2</span><button onClick={logout}>Sair</button></header><main><section className="hero"><div><h1>Gestão de recursos escolares</h1><p>Reserve espaços, equipamentos e materiais pedagógicos.</p></div><label>Unidade escolar<select value={school} onChange={e=>{const id=e.target.value;setSchool(id)}}>{schools.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></section><nav>{[['agenda','Agenda e reserva'],['recursos','Recursos'],['minhas','Reservas'],['admin','Administração'],['calendar','Calendário escolar']].filter(([id])=>(id!=='admin'&&id!=='calendar')||isAdmin).map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('')}}>{label}</button>)}</nav>{(authNotice || notice || loadError) && <p role="status" className="notice">{authNotice || notice || loadError}</p>}
+{tab==='agenda'&&<div className="columns"><section className="panel"><h2>Nova reserva</h2><label>Recurso<select value={selected?.id||''} onChange={e=>setResourceId(e.target.value)}>{local.filter(x=>x.active).map(x=><option value={x.id} key={x.id}>{x.name} ({x.quantity} un.)</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><label>Período<select value={period} onChange={e=>setPeriod(Number(e.target.value))}>{[1,2,3,4,5].map(x=><option value={x} key={x}>{x}ª aula</option>)}</select></label><label>Quantidade<input type="number" min="1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><button className="primary" disabled={busy||!selected||!date||!!blocked} onClick={reserve}>Confirmar reserva</button>{blocked && <p role="status">{blocked.reason}</p>}</section><section className="panel"><h2>Disponibilidade do dia</h2><p className="muted">{date} · {selected?.name}</p>{[1,2,3,4,5].map(x=>{const restriction=restrictionFor(restrictions,date,x);const used=availability?.find(slot=>slot.period===x)?.used ?? 0;return <div className="slot" key={x}><strong>{x}ª aula</strong><span className={restriction||used>=(selected?.quantity||1)?'busy':'free'}>{restriction?.reason ?? (availability && selected ? used + "/" + selected.quantity + " reservados" : "—")}</span></div>})}</section></div>}
 {tab==='recursos'&&<section className="panel"><h2>Catálogo</h2><div className="cards">{local.map(x=><article className="resource" key={x.id}><span className="tag">{x.category}</span><h3>{x.name}</h3><p>{x.quantity} unidade(s)</p><span>{x.active?'Ativo':'Inativo'}</span></article>)}</div></section>}
-{tab==='minhas'&&<section className="panel"><h2>Reservas da unidade</h2><p className="muted">Somente demonstração local; sem autenticação.</p>{active.length===0?<p>Nenhuma reserva ativa.</p>:active.map(x=><div className="booking" key={x.id}><div><strong>{resources.find(r=>r.id===x.resourceId)?.name}</strong><p>{x.date} · {x.period}ª aula · {x.quantity} un. · {x.teacher}</p></div><button onClick={()=>{persistBookings(bookings.map(b=>b.id===x.id?{...b,status:'cancelled'}:b));setNotice('Reserva cancelada.')}}>Cancelar</button></div>)}</section>}
-{tab==='admin'&&<div className="columns"><section className="panel"><h2>Cadastrar recurso</h2><label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label><label>Categoria<select value={category} onChange={e=>setCategory(e.target.value)}>{['Espaços','Equipamentos','Materiais'].map(x=><option key={x}>{x}</option>)}</select></label><label>Quantidade<input type="number" min="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label><button className="primary" onClick={add}>Adicionar recurso</button></section><section className="panel"><h2>Gerenciar recursos</h2>{local.map(x=><div className="booking" key={x.id}><div><strong>{x.name}</strong><p>{x.quantity} un. · {x.category}</p></div><button onClick={()=>persistResources(resources.map(r=>r.id===x.id?{...r,active:!r.active}:r))}>{x.active?'Desativar':'Ativar'}</button></div>)}</section></div>}
-<footer>Ambiente de demonstração. Dados somente neste navegador. Não utilizar para reservas oficiais.</footer></main></>}
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+{tab==='minhas'&&<section className="panel"><h2>{isAdmin ? "Reservas da unidade" : "Minhas reservas"}</h2>{active.length===0?<p>Nenhuma reserva ativa.</p>:active.map(x=><div className="booking" key={x.id}><div><strong>{local.find(r=>r.id===x.resource_id)?.name}</strong><p>{x.date} · {x.period}ª aula · {x.quantity} un.</p>{x.calendar_conflict && <p className="busy">Conflito com o calendário · {x.calendar_conflict}</p>}</div><button disabled={busy} onClick={()=>cancel(x.id)}>Cancelar</button></div>)}</section>}
+{tab==='admin'&&isAdmin&&<div className="columns"><section className="panel"><h2>Cadastrar recurso</h2><label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label><label>Categoria<select value={category} onChange={e=>setCategory(e.target.value)}>{['Espaços','Equipamentos','Materiais'].map(x=><option key={x}>{x}</option>)}</select></label><label>Quantidade<input type="number" min="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label><button className="primary" disabled={busy} onClick={add}>Adicionar recurso</button></section><section className="panel"><h2>Gerenciar recursos</h2>{local.map(x=><div className="booking" key={x.id}><div><strong>{x.name}</strong><p>{x.quantity} un. · {x.category}</p></div><button disabled={busy} onClick={()=>toggle(x)}>{x.active?'Desativar':'Ativar'}</button></div>)}</section></div>}
+{tab==='calendar'&&isAdmin&&<CalendarAdmin client={client} school={school} onPublish={()=>setRefresh(value=>value+1)} />}
+</main></>}
+
+createRoot(document.getElementById('root')!).render(<App />);
+
+
