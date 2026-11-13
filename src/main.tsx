@@ -13,7 +13,7 @@ const db = url && key ? createClient(url, key) : null;
 
 type School = { id: string; name: string };
 type Resource = { id: string; name: string; category: string; quantity: number; active: boolean };
-type Booking = { id: string; resource_id: string; date: string; period: number; quantity: number; calendar_conflict?: string | null };
+type Booking = { id: string; resource_id: string; date: string; period: number; quantity: number; class_group: string | null; calendar_conflict?: string | null };
 type Slot = { period: number; used: number };
 
 function App() {
@@ -153,6 +153,7 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
   }
 
   useEffect(() => { void reloadPeriods(); }, [client, school]);
+  const [classGroup, setClassGroup] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Equipamentos');
@@ -185,7 +186,7 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
     const controller = new AbortController();
     void Promise.all([
       client.from('resources').select('id,name,category,quantity,active').eq('school_id', school).order('name').abortSignal(controller.signal),
-      client.from('reservations').select('id,resource_id,date,period,quantity,calendar_conflict').eq('school_id', school)
+      client.from('reservations').select('id,resource_id,date,period,quantity,class_group,calendar_conflict').eq('school_id', school)
         .is('cancelled_at', null).order('date').order('period').abortSignal(controller.signal),
     ]).then(([resources, bookings]) => {
       if (controller.signal.aborted) return;
@@ -235,13 +236,14 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
   }
 
   function reserve() {
+    if (!classGroup.trim()) { setNotice('Informe a turma que usará o recurso.'); return; }
     if (!selected || !date || !Number.isInteger(quantity) || quantity < 1 || quantity > selected.quantity) {
       setNotice('Informe uma data e uma quantidade válida para o recurso.');
       return;
     }
     const id = selected.id;
-    void change(() => client.rpc('reserve_resource', {
-      p_school: school, p_resource: id, p_date: date, p_period: period, p_quantity: quantity,
+    void change(() => client.rpc('reserve_resource_for_class', {
+      p_school: school, p_resource: id, p_date: date, p_period: period, p_quantity: quantity, p_class_group: classGroup.trim(),
     }), 'Reserva confirmada.');
   }
 
@@ -267,9 +269,9 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
   }
 
 return <><header><div className="school-brand">{logo && <img className="school-logo" src={logo} alt={schools.find(unit => unit.id === school)?.name ?? "Logotipo da escola"} />}<div><strong>SRDs</strong><small>Sistema de Reservas de Recursos Didáticos</small></div></div><span className="version">v{version}</span><button onClick={logout}>Sair</button></header><main><section className="hero"><div><h1>Gestão de recursos escolares</h1><p>Reserve espaços, equipamentos e materiais pedagógicos.</p></div><label>Unidade escolar<select value={school} onChange={e=>{const id=e.target.value;setSchool(id)}}>{schools.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></section><nav>{[['agenda','Agenda e reserva'],['recursos','Recursos'],['minhas','Reservas'],['admin','Administração'],['calendar','Calendário escolar']].filter(([id])=>(id!=='admin'&&id!=='calendar')||isAdmin).map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('')}}>{label}</button>)}</nav>{periodError && <p role="alert">{periodError}</p>}{(authNotice || notice || loadError) && <p role="status" className="notice">{authNotice || notice || loadError}</p>}
-{tab==='agenda'&&<div className="columns"><section className="panel"><h2>Nova reserva</h2><label>Recurso<select value={selected?.id||''} onChange={e=>setResourceId(e.target.value)}>{local.filter(x=>x.active).map(x=><option value={x.id} key={x.id}>{x.name} ({x.quantity} un.)</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label>{group && <label>Turno e segmento<select value={group} onChange={e=>setGroup(e.target.value)}>{groups.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>}<label>Período<select value={period} onChange={e=>setPeriod(Number(e.target.value))}>{activePeriods.map(slot=><option value={slot.period} key={slot.period}>{periodLabel(slot)}</option>)}</select></label><label>Quantidade<input type="number" min="1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><button className="primary" disabled={busy||!selected||!date||!!blocked||!period||!periods||!!periodError} onClick={reserve}>Confirmar reserva</button>{blocked && <p role="status">{blocked.reason}</p>}</section><section className="panel"><h2>Disponibilidade do dia</h2><p className="muted">{date} · {selected?.name}</p>{activePeriods.map(slot=>{const x=slot.period;const restriction=restrictionFor(restrictions,date,x);const used=availability?.find(slot=>slot.period===x)?.used ?? 0;return <div className="slot" key={x}><strong>{periodLabel(slot)}</strong><span className={restriction||used>=(selected?.quantity||1)?'busy':'free'}>{restriction?.reason ?? (availability && selected ? used + "/" + selected.quantity + " reservados" : "—")}</span></div>})}</section></div>}
+{tab==='agenda'&&<div className="columns"><section className="panel"><h2>Nova reserva</h2><label>Recurso<select value={selected?.id||''} onChange={e=>setResourceId(e.target.value)}>{local.filter(x=>x.active).map(x=><option value={x.id} key={x.id}>{x.name} ({x.quantity} un.)</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label>{group && <label>Turno e segmento<select value={group} onChange={e=>setGroup(e.target.value)}>{groups.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>}<label>Período<select value={period} onChange={e=>setPeriod(Number(e.target.value))}>{activePeriods.map(slot=><option value={slot.period} key={slot.period}>{periodLabel(slot)}</option>)}</select></label><label>Turma<input value={classGroup} maxLength={40} onChange={e=>setClassGroup(e.target.value)} placeholder="Ex. 61" required /></label><label>Quantidade<input type="number" min="1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><button className="primary" disabled={busy||!selected||!date||!!blocked||!period||!periods||!!periodError||!classGroup.trim()} onClick={reserve}>Confirmar reserva</button>{blocked && <p role="status">{blocked.reason}</p>}</section><section className="panel"><h2>Disponibilidade do dia</h2><p className="muted">{date} · {selected?.name}</p>{activePeriods.map(slot=>{const x=slot.period;const restriction=restrictionFor(restrictions,date,x);const used=availability?.find(slot=>slot.period===x)?.used ?? 0;return <div className="slot" key={x}><strong>{periodLabel(slot)}</strong><span className={restriction||used>=(selected?.quantity||1)?'busy':'free'}>{restriction?.reason ?? (availability && selected ? used + "/" + selected.quantity + " reservados" : "—")}</span></div>})}</section></div>}
 {tab==='recursos'&&<section className="panel"><h2>Catálogo</h2><div className="cards">{local.map(x=><article className="resource" key={x.id}><span className="tag">{x.category}</span><h3>{x.name}</h3><p>{x.quantity} unidade(s)</p><span>{x.active?'Ativo':'Inativo'}</span></article>)}</div></section>}
-{tab==='minhas'&&<section className="panel"><h2>{isAdmin ? "Reservas da unidade" : "Minhas reservas"}</h2>{active.length===0?<p>Nenhuma reserva ativa.</p>:active.map(x=><div className="booking" key={x.id}><div><strong>{local.find(r=>r.id===x.resource_id)?.name}</strong><p>{x.date} · {periodLabel(allPeriods.find(slot=>slot.period===x.period) ?? { ...legacyPeriods[0], label: x.period + "ª aula" })} · {x.quantity} un.</p>{x.calendar_conflict && <p className="busy">Conflito com o calendário · {x.calendar_conflict}</p>}</div><button disabled={busy} onClick={()=>cancel(x.id)}>Cancelar</button></div>)}</section>}
+{tab==='minhas'&&<section className="panel"><h2>{isAdmin ? "Reservas da unidade" : "Minhas reservas"}</h2>{active.length===0?<p>Nenhuma reserva ativa.</p>:active.map(x=><div className="booking" key={x.id}><div><strong>{local.find(r=>r.id===x.resource_id)?.name}</strong><p>{x.date} · {periodLabel(allPeriods.find(slot=>slot.period===x.period) ?? { ...legacyPeriods[0], label: x.period + "ª aula" })} · {x.quantity} un. · {x.class_group ? "Turma " + x.class_group : "Turma não informada"}</p>{x.calendar_conflict && <p className="busy">Conflito com o calendário · {x.calendar_conflict}</p>}</div><button disabled={busy} onClick={()=>cancel(x.id)}>Cancelar</button></div>)}</section>}
 {tab==='admin'&&isAdmin&&<div className="columns"><section className="panel"><h2>Cadastrar recurso</h2><label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label><label>Categoria<select value={category} onChange={e=>setCategory(e.target.value)}>{['Espaços','Equipamentos','Materiais'].map(x=><option key={x}>{x}</option>)}</select></label><label>Quantidade<input type="number" min="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label><button className="primary" disabled={busy} onClick={add}>Adicionar recurso</button></section><section className="panel"><h2>Gerenciar recursos</h2>{local.map(x=><div className="booking" key={x.id}><div><strong>{x.name}</strong><p>{x.quantity} un. · {x.category}</p></div><button disabled={busy} onClick={()=>toggle(x)}>{x.active?'Desativar':'Ativar'}</button></div>)}</section></div>}
 {tab==='admin'&&isAdmin&&!logoLoading&&<SchoolLogoAdmin client={client} school={school} logo={logo} onChange={setLogo} />}
 {tab==='admin'&&isAdmin&&periods&&<SchoolPeriods client={client} school={school} periods={periods} reload={reloadPeriods} />}

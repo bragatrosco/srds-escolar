@@ -18,6 +18,26 @@ export function SchoolPeriods({ client, school, periods, reload }: {
 }) {
   const [initial, setInitial] = useState(legacyPeriods);
   const [draft, setDraft] = useState({ segment: '', shift: '', label: '', starts: '', ends: '' });
+  const [batch, setBatch] = useState('');
+  const [preview, setPreview] = useState<(typeof draft)[]>([]);
+
+  function parseBatch() {
+    setPreview([]);
+    const lines = batch.trim().split(/\r?\n/).filter(line => line.trim());
+    const rows = lines.map(line => {
+      const [segment, shift, label, starts, ends, ...extra] = line.split(';').map(value => value.trim());
+      const time = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+      if (extra.length || [segment, shift, label].some(value => !value || value.length > 40)
+          || !time.test(starts) || !time.test(ends) || starts >= ends) return null;
+      return { segment, shift, label, starts, ends };
+    });
+    if (!rows.length || rows.some(row => row === null) || rows.length > 100) {
+      setMessage('Confira as linhas. Use até 100 aulas no formato segmento;turno;aula;HH:MM;HH:MM.');
+      return;
+    }
+    setMessage('');
+    setPreview(rows.filter(row => row !== null));
+  }
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -34,6 +54,8 @@ export function SchoolPeriods({ client, school, periods, reload }: {
       }
       await reload();
       setMessage('Grade atualizada.');
+      setBatch('');
+      setPreview([]);
       setDraft({ segment: '', shift: '', label: '', starts: '', ends: '' });
     } catch {
       setMessage('Confira a grade antes de repetir a operação.');
@@ -80,6 +102,18 @@ export function SchoolPeriods({ client, school, periods, reload }: {
         <button className="primary">Salvar horários</button>
       </fieldset>
     </form>
+    {!!periods.length && <fieldset disabled={busy}>
+      <legend>Adicionar aulas em lote</legend>
+      <label>Uma aula por linha, sem cabeçalho
+        <textarea rows={6} value={batch} onChange={e => { setBatch(e.target.value); setPreview([]); }}
+          placeholder="Anos Finais;Matutino;1ª aula;07:30;08:15" />
+      </label>
+      <button onClick={parseBatch}>Revisar lote</button>
+      {!!preview.length && <>
+        <ul>{preview.map((row, index) => <li key={index}>{periodLabel({ ...row, period: 0, active: true })}</li>)}</ul>
+        <button className="primary" onClick={() => void save(preview)}>Salvar {preview.length} aulas</button>
+      </>}
+    </fieldset>}
     {message && <p role="status">{message}</p>}
   </section>;
 }
