@@ -1,15 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export type Period = { period: number; shift: string; label: string; starts: string; ends: string; active: boolean };
+export type Period = { period: number; segment: string; shift: string; label: string; starts: string; ends: string; active: boolean };
 
 export const legacyPeriods: Period[] = Array.from({ length: 5 }, (_, i) => ({
-  period: i + 1, shift: '', label: (i + 1) + 'ª aula', starts: '', ends: '', active: true,
+  period: i + 1, segment: '', shift: '', label: (i + 1) + 'ª aula', starts: '', ends: '', active: true,
 }));
 
 export function periodLabel(slot: Period) {
   return slot.shift
-    ? slot.shift + ' · ' + slot.label + ' (' + slot.starts.slice(0, 5) + '–' + slot.ends.slice(0, 5) + ')'
+    ? slot.shift + ' · ' + slot.segment + ' · ' + slot.label + ' (' + slot.starts.slice(0, 5) + '–' + slot.ends.slice(0, 5) + ')'
     : slot.label;
 }
 
@@ -17,7 +17,7 @@ export function SchoolPeriods({ client, school, periods, reload }: {
   client: SupabaseClient; school: string; periods: Period[]; reload: () => Promise<void>;
 }) {
   const [initial, setInitial] = useState(legacyPeriods);
-  const [draft, setDraft] = useState({ shift: '', label: '', starts: '', ends: '' });
+  const [draft, setDraft] = useState({ segment: '', shift: '', label: '', starts: '', ends: '' });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -34,7 +34,7 @@ export function SchoolPeriods({ client, school, periods, reload }: {
       }
       await reload();
       setMessage('Grade atualizada.');
-      setDraft({ shift: '', label: '', starts: '', ends: '' });
+      setDraft({ segment: '', shift: '', label: '', starts: '', ends: '' });
     } catch {
       setMessage('Confira a grade antes de repetir a operação.');
     } finally {
@@ -43,6 +43,7 @@ export function SchoolPeriods({ client, school, periods, reload }: {
   }
 
   const fields = (row: typeof draft, update: (patch: Partial<typeof draft>) => void) => <>
+    <label>Segmento<input required maxLength={40} value={row.segment} onChange={e => update({ segment: e.target.value })} placeholder="Ex. Anos Iniciais" /></label>
     <label>Turno<input required maxLength={40} value={row.shift} onChange={e => update({ shift: e.target.value })} placeholder="Ex. Matutino" /></label>
     <label>Aula<input required maxLength={40} value={row.label} onChange={e => update({ label: e.target.value })} /></label>
     <label>Início<input type="time" required value={row.starts} onChange={e => update({ starts: e.target.value })} /></label>
@@ -67,6 +68,7 @@ export function SchoolPeriods({ client, school, periods, reload }: {
         {slot.active ? 'Desativar' : 'Reativar'}
       </button>
     </div>)}
+    {!periods.length && <p>Vincule cada código original à aula correspondente. Confira as reservas e os bloqueios existentes antes de salvar.</p>}
     <form onSubmit={submit}>
       <fieldset disabled={busy}>
         <legend>{periods.length ? 'Adicionar aula' : 'Configurar as cinco aulas existentes'}</legend>
