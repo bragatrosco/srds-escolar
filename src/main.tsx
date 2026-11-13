@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, type Session } from '@supabase/supabase-js';
 import './style.css';
+import { CalendarAdmin, restrictionFor, type Restriction } from './CalendarAdmin';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -9,7 +10,7 @@ const db = url && key ? createClient(url, key) : null;
 
 type School = { id: string; name: string };
 type Resource = { id: string; name: string; category: string; quantity: number; active: boolean };
-type Booking = { id: string; resource_id: string; date: string; period: number; quantity: number };
+type Booking = { id: string; resource_id: string; date: string; period: number; quantity: number; calendar_conflict?: string | null };
 type Slot = { period: number; used: number };
 
 function App() {
@@ -118,6 +119,20 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [calendar, setCalendar] = useState<{ date: string; refresh: number; rows: Restriction[] }>();
+  const restrictions = calendar?.date === date && calendar.refresh === refresh ? calendar.rows : [];
+  const blocked = restrictionFor(restrictions, date, period);
+
+  useEffect(() => {
+    if (!date) return;
+    const controller = new AbortController();
+    void client.from('calendar_restrictions').select('date,period,reason')
+      .eq('school_id', school).eq('date', date).abortSignal(controller.signal)
+      .then(({ data, error }) => {
+        if (!controller.signal.aborted && !error) setCalendar({ date, refresh, rows: data });
+      });
+    return () => controller.abort();
+  }, [client, school, date, refresh]);
   const [snapshot, setSnapshot] = useState<{ key: string; slots: Slot[] }>();
   const selected = local.find(row => row.id === resourceId && row.active) ?? local.find(row => row.active);
   const selectedId = selected?.id;
@@ -128,7 +143,7 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
     const controller = new AbortController();
     void Promise.all([
       client.from('resources').select('id,name,category,quantity,active').eq('school_id', school).order('name').abortSignal(controller.signal),
-      client.from('reservations').select('id,resource_id,date,period,quantity').eq('school_id', school)
+      client.from('reservations').select('id,resource_id,date,period,quantity,calendar_conflict').eq('school_id', school)
         .is('cancelled_at', null).order('date').order('period').abortSignal(controller.signal),
     ]).then(([resources, bookings]) => {
       if (controller.signal.aborted) return;
@@ -209,12 +224,14 @@ function SchoolWorkspace({ client, logout, authNotice, schools, school, setSchoo
       .eq('school_id', school).eq('id', resource.id).select('id').single(), 'Recurso atualizado.');
   }
 
-return <><header><div><strong>SRDs</strong><small>Sistema de Reservas de Recursos Didáticos</small></div><span className="version">v0.2</span><button onClick={logout}>Sair</button></header><main><section className="hero"><div><h1>Gestão de recursos escolares</h1><p>Reserve espaços, equipamentos e materiais pedagógicos.</p></div><label>Unidade escolar<select value={school} onChange={e=>{const id=e.target.value;setSchool(id)}}>{schools.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></section><nav>{[['agenda','Agenda e reserva'],['recursos','Recursos'],['minhas','Reservas'],['admin','Administração']].filter(([id])=>id!=='admin'||isAdmin).map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('')}}>{label}</button>)}</nav>{(authNotice || notice || loadError) && <p role="status" className="notice">{authNotice || notice || loadError}</p>}
-{tab==='agenda'&&<div className="columns"><section className="panel"><h2>Nova reserva</h2><label>Recurso<select value={selected?.id||''} onChange={e=>setResourceId(e.target.value)}>{local.filter(x=>x.active).map(x=><option value={x.id} key={x.id}>{x.name} ({x.quantity} un.)</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><label>Período<select value={period} onChange={e=>setPeriod(Number(e.target.value))}>{[1,2,3,4,5].map(x=><option value={x} key={x}>{x}ª aula</option>)}</select></label><label>Quantidade<input type="number" min="1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><button className="primary" disabled={busy||!selected||!date} onClick={reserve}>Confirmar reserva</button></section><section className="panel"><h2>Disponibilidade do dia</h2><p className="muted">{date} · {selected?.name}</p>{[1,2,3,4,5].map(x=>{const used=availability?.find(slot=>slot.period===x)?.used ?? 0;return <div className="slot" key={x}><strong>{x}ª aula</strong><span className={used>=(selected?.quantity||1)?'busy':'free'}>{availability && selected ? used + "/" + selected.quantity + " reservados" : "—"}</span></div>})}</section></div>}
+return <><header><div><strong>SRDs</strong><small>Sistema de Reservas de Recursos Didáticos</small></div><span className="version">v0.2</span><button onClick={logout}>Sair</button></header><main><section className="hero"><div><h1>Gestão de recursos escolares</h1><p>Reserve espaços, equipamentos e materiais pedagógicos.</p></div><label>Unidade escolar<select value={school} onChange={e=>{const id=e.target.value;setSchool(id)}}>{schools.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></section><nav>{[['agenda','Agenda e reserva'],['recursos','Recursos'],['minhas','Reservas'],['admin','Administração'],['calendar','Calendário escolar']].filter(([id])=>(id!=='admin'&&id!=='calendar')||isAdmin).map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>{setTab(id);setNotice('')}}>{label}</button>)}</nav>{(authNotice || notice || loadError) && <p role="status" className="notice">{authNotice || notice || loadError}</p>}
+{tab==='agenda'&&<div className="columns"><section className="panel"><h2>Nova reserva</h2><label>Recurso<select value={selected?.id||''} onChange={e=>setResourceId(e.target.value)}>{local.filter(x=>x.active).map(x=><option value={x.id} key={x.id}>{x.name} ({x.quantity} un.)</option>)}</select></label><label>Data<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><label>Período<select value={period} onChange={e=>setPeriod(Number(e.target.value))}>{[1,2,3,4,5].map(x=><option value={x} key={x}>{x}ª aula</option>)}</select></label><label>Quantidade<input type="number" min="1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><button className="primary" disabled={busy||!selected||!date||!!blocked} onClick={reserve}>Confirmar reserva</button>{blocked && <p role="status">{blocked.reason}</p>}</section><section className="panel"><h2>Disponibilidade do dia</h2><p className="muted">{date} · {selected?.name}</p>{[1,2,3,4,5].map(x=>{const restriction=restrictionFor(restrictions,date,x);const used=availability?.find(slot=>slot.period===x)?.used ?? 0;return <div className="slot" key={x}><strong>{x}ª aula</strong><span className={restriction||used>=(selected?.quantity||1)?'busy':'free'}>{restriction?.reason ?? (availability && selected ? used + "/" + selected.quantity + " reservados" : "—")}</span></div>})}</section></div>}
 {tab==='recursos'&&<section className="panel"><h2>Catálogo</h2><div className="cards">{local.map(x=><article className="resource" key={x.id}><span className="tag">{x.category}</span><h3>{x.name}</h3><p>{x.quantity} unidade(s)</p><span>{x.active?'Ativo':'Inativo'}</span></article>)}</div></section>}
-{tab==='minhas'&&<section className="panel"><h2>{isAdmin ? "Reservas da unidade" : "Minhas reservas"}</h2>{active.length===0?<p>Nenhuma reserva ativa.</p>:active.map(x=><div className="booking" key={x.id}><div><strong>{local.find(r=>r.id===x.resource_id)?.name}</strong><p>{x.date} · {x.period}ª aula · {x.quantity} un.</p></div><button disabled={busy} onClick={()=>cancel(x.id)}>Cancelar</button></div>)}</section>}
+{tab==='minhas'&&<section className="panel"><h2>{isAdmin ? "Reservas da unidade" : "Minhas reservas"}</h2>{active.length===0?<p>Nenhuma reserva ativa.</p>:active.map(x=><div className="booking" key={x.id}><div><strong>{local.find(r=>r.id===x.resource_id)?.name}</strong><p>{x.date} · {x.period}ª aula · {x.quantity} un.</p>{x.calendar_conflict && <p className="busy">Conflito com o calendário · {x.calendar_conflict}</p>}</div><button disabled={busy} onClick={()=>cancel(x.id)}>Cancelar</button></div>)}</section>}
 {tab==='admin'&&isAdmin&&<div className="columns"><section className="panel"><h2>Cadastrar recurso</h2><label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label><label>Categoria<select value={category} onChange={e=>setCategory(e.target.value)}>{['Espaços','Equipamentos','Materiais'].map(x=><option key={x}>{x}</option>)}</select></label><label>Quantidade<input type="number" min="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label><button className="primary" disabled={busy} onClick={add}>Adicionar recurso</button></section><section className="panel"><h2>Gerenciar recursos</h2>{local.map(x=><div className="booking" key={x.id}><div><strong>{x.name}</strong><p>{x.quantity} un. · {x.category}</p></div><button disabled={busy} onClick={()=>toggle(x)}>{x.active?'Desativar':'Ativar'}</button></div>)}</section></div>}
+{tab==='calendar'&&isAdmin&&<CalendarAdmin client={client} school={school} onPublish={()=>setRefresh(value=>value+1)} />}
 </main></>}
 
 createRoot(document.getElementById('root')!).render(<App />);
+
 

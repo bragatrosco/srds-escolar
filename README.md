@@ -29,4 +29,27 @@ Repita o vínculo com papel `teacher` para professores. Os registros fictícios 
 
 ## Publicar
 
+### Calendário escolar
+
+Em um banco que já tem as tabelas da v0.2, revise e aplique apenas
+`supabase/migrations/202611130002_school_calendar.sql` no Supabase de teste.
+No SRDs, entre como administrador da escola, abra **Calendário escolar**,
+selecione o ano e clique em **Abrir ano**.
+
+O PDF original de 2026 da EBM Vitor Miguel de Souza carrega 45 sugestões
+(feriados, pontos facultativos e recessos). Para outros arquivos, baixe o modelo
+CSV e preencha `data;periodo;motivo` em UTF-8. Use datas no formato
+`AAAA-MM-DD` e período 0 para dia inteiro ou 1 a 5 para uma aula.
+Confira as datas e clique em **Publicar restrições**. A agenda mostra os motivos,
+e a lista de reservas sinaliza os registros já confirmados nas datas afetadas.
+
+Em teste, confirme o bloqueio em 20/11/2026 e 23/12/2026, uma reserva em
+11/02/2026 com recurso disponível e o funcionamento de uma segunda escola
+sem restrições publicadas. Para testar a validação no servidor, deixe a agenda
+aberta em outra sessão antes de publicar um bloqueio e tente confirmar uma
+reserva nessa sessão depois da publicação.
+
+### GitHub Pages
+
 Após validar o banco de teste, revise e aplique a migração no projeto de destino. Em Settings → Secrets and variables → Actions → Variables, configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`. Em Settings → Pages, selecione GitHub Actions como origem, se o plano permitir publicar a partir do repositório privado. A atualização da `main` aciona a publicação. A branch `srds-v0.2` executa apenas a compilação.
+
