@@ -1,3 +1,4 @@
+import { AccessForm, SchoolAccess, AccessReview } from './SchoolAccess';
 import { useEffect, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, type Session } from '@supabase/supabase-js';
@@ -17,13 +18,17 @@ type Booking = { id: string; resource_id: string; date: string; period: number; 
 type Slot = { period: number; used: number };
 
 function App() {
+  const [mode, setMode] = useState<'login' | 'signup' | 'reset' | 'password'>('login');
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!db) return;
-    const { data } = db.auth.onAuthStateChange((_event, current) => setSession(current));
+    const { data } = db.auth.onAuthStateChange((event, current) => {
+      if (event === 'PASSWORD_RECOVERY') setMode('password');
+      setSession(current);
+    });
     return () => data.subscription.unsubscribe();
   }, []);
 
@@ -53,12 +58,19 @@ function App() {
 
   if (!db) return <main><p role="alert">Configure a URL e a chave publicável do Supabase para acessar o SRDs.</p></main>;
   if (session === undefined) return <main><p role="status">Carregando sessão…</p></main>;
+  if (mode === 'password' && session) return <main><AccessForm client={db} mode="password" back={() => {
+    window.history.replaceState(null, '', window.location.pathname);
+    setMode('login');
+  }} /></main>;
   if (session) return <Workspace key={session.user.id} client={db} logout={logout} authNotice={notice} />;
+  if (mode === 'signup' || mode === 'reset') return <main><AccessForm client={db} mode={mode} back={() => setMode('login')} /></main>;
   return <main><form className="panel" onSubmit={login}>
     <h1>Entrar no SRDs</h1>
     <label>E-mail<input name="email" type="email" autoComplete="username" required /></label>
     <label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>
     <button className="primary" disabled={busy}>Entrar</button>
+    <button type="button" onClick={() => setMode('signup')}>Criar conta</button>
+    <button type="button" onClick={() => setMode('reset')}>Esqueci minha senha</button>
     {notice && <p role="status">{notice}</p>}
   </form></main>;
 }
@@ -92,6 +104,7 @@ function Workspace({ client, logout, authNotice }: {
   }, [client]);
 
   const status = authNotice || notice;
+  if (schools?.length === 0) return <SchoolAccess client={client} logout={logout} />;
   if (!schools?.length) return <main>
     <p role="status">{status || (schools ? 'Seu usuário ainda não está vinculado a uma escola.' : 'Carregando escolas…')}</p>
     <button onClick={logout}>Sair</button>
@@ -275,6 +288,7 @@ return <><header><div className="school-brand">{logo && <img className="school-l
 {tab==='admin'&&isAdmin&&<div className="columns"><section className="panel"><h2>Cadastrar recurso</h2><label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label><label>Categoria<select value={category} onChange={e=>setCategory(e.target.value)}>{['Espaços','Equipamentos','Materiais'].map(x=><option key={x}>{x}</option>)}</select></label><label>Quantidade<input type="number" min="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label><button className="primary" disabled={busy} onClick={add}>Adicionar recurso</button></section><section className="panel"><h2>Gerenciar recursos</h2>{local.map(x=><div className="booking" key={x.id}><div><strong>{x.name}</strong><p>{x.quantity} un. · {x.category}</p></div><button disabled={busy} onClick={()=>toggle(x)}>{x.active?'Desativar':'Ativar'}</button></div>)}</section></div>}
 {tab==='admin'&&isAdmin&&!logoLoading&&<SchoolLogoAdmin client={client} school={school} logo={logo} onChange={setLogo} />}
 {tab==='admin'&&isAdmin&&periods&&<SchoolPeriods client={client} school={school} periods={periods} reload={reloadPeriods} />}
+{tab==='admin'&&isAdmin&&<AccessReview client={client} school={school} />}
 {tab==='calendar'&&isAdmin&&<CalendarAdmin client={client} school={school} periods={allPeriods} onPublish={()=>setRefresh(value=>value+1)} />}
 </main></>}
 
